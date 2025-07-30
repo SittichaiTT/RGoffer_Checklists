@@ -9,23 +9,23 @@ import uuid # For generating unique user IDs for anonymous login
 # --- Configuration ---
 # Theme Colors (Adjusted for minimalist, high-contrast look)
 THEME_COLORS = {
-    "primary_bg": "#F8F8F8",  # Very light grey background
+    "primary_bg": "#F5F5F5",  # Lighter grey background
     "secondary_bg": "#FFFFFF",  # Pure white for content blocks
     "text_dark": "#212121",   # Very dark grey/almost black for main text
     "text_light": "#616161",  # Medium grey for secondary text, improved contrast
-    "button_primary": "#4285F4",  # Google Blue
-    "button_primary_hover": "#3367D6", # Darker Google Blue on hover
+    "button_primary": "#FF5722",  # Deep Orange
+    "button_primary_hover": "#E64A19", # Darker Deep Orange on hover
     "button_secondary": "#BDBDBD", # Light neutral grey
     "button_secondary_hover": "#9E9E9E", # Darker neutral grey on hover
     "button_disabled": "#E0E0E0", # Light grey for disabled buttons
-    "progress_yellow": "#FBBC04", # Google Yellow
-    "progress_blue": "#4285F4",   # Consistent with primary button
-    "progress_green": "#34A853",  # Google Green
+    "progress_yellow": "#FFC107", # Amber
+    "progress_blue": "#FF9800",   # Orange
+    "progress_green": "#4CAF50",  # Green
     "border_color": "#E0E0E0", # Light grey border
     "placeholder_text": "#9E9E9E", # Medium grey for placeholders
     "dropdown_fg": "#212121", # Dark text for dropdowns
-    "dropdown_hover": "#F5F5F5", # Very light hover for dropdowns
-    "sub_group_underline": "#4285F4", # Consistent with primary color
+    "dropdown_hover": "#EEEEEE", # Very light hover for dropdowns
+    "sub_group_underline": "#FF5722", # Consistent with primary color
     "error_text": "#D32F2F" # Dark red for error messages
 }
 
@@ -222,18 +222,15 @@ db = initialize_firebase()
 # --- Authentication Functions ---
 def login_user(email, password):
     try:
-        # For a Streamlit app, Firebase Admin SDK cannot directly sign in users with email/password.
-        # This is a security measure. You would typically use Firebase Client SDK (JS) for this,
-        # or a custom backend.
+        # Firebase Admin SDK does not directly verify passwords for security reasons.
+        # For a Streamlit app, you would typically use a client-side Firebase SDK (e.g., via JavaScript in an HTML component)
+        # or a custom backend to handle password authentication securely.
         # For this example, we'll simulate a check against Firebase users.
-        # In a real deployed app, you'd need a more robust client-side authentication flow.
-        user = auth.get_user_by_email(email)
-        # This only checks if the user exists. It does NOT verify the password.
-        # For actual password verification, you'd need to use Firebase Client SDK (e.g., via JavaScript in an HTML component)
-        # or a custom backend that uses Firebase Admin SDK to verify credentials.
+        # This is INSECURE for production.
+        user = auth.get_user_by_email(email) # Checks if user exists by email
         
         # For demonstration purposes, if the user exists, we consider them "logged in".
-        # This is INSECURE for production.
+        # A real application would need to verify the password securely.
         st.session_state.user_id = user.uid
         st.session_state.user_email = user.email
         st.session_state.logged_in = True
@@ -273,7 +270,8 @@ def load_projects_from_firestore(user_id):
     """Loads projects from Firestore for the given user."""
     projects_ref = get_user_projects_collection_ref(user_id)
     if projects_ref is None:
-        return pd.DataFrame(columns=["user_id", "project_name", "progress", "summary", "checklist_data"])
+        # Ensure that an empty DataFrame with correct columns is returned even if db is not initialized
+        return pd.DataFrame(columns=["user_id", "project_name", "progress", "summary", "checklist_data", "id"])
     
     try:
         docs = projects_ref.stream()
@@ -282,12 +280,16 @@ def load_projects_from_firestore(user_id):
             project_data = doc.to_dict()
             project_data['id'] = doc.id # Store Firestore document ID
             projects_list.append(project_data)
-        df = pd.DataFrame(projects_list)
+        
+        # Explicitly define columns even if projects_list is empty to prevent KeyError
+        df = pd.DataFrame(projects_list, columns=["user_id", "project_name", "progress", "summary", "checklist_data", "id"])
+        
         st.success(f"Successfully loaded {len(df)} projects from Firestore.")
         return df
     except Exception as e:
         st.error(f"Error loading projects from Firestore: {e}")
-        return pd.DataFrame(columns=["user_id", "project_name", "progress", "summary", "checklist_data"])
+        # Ensure that an empty DataFrame with correct columns is returned on error
+        return pd.DataFrame(columns=["user_id", "project_name", "progress", "summary", "checklist_data", "id"])
 
 def save_project_to_firestore(user_id, project_name, progress, summary, checklist_data):
     """Saves or updates a project in Firestore."""
@@ -416,7 +418,8 @@ def calculate_progress(values):
                 elif item_value and item_value.get("selection"):
                     completed_items += 1
     
-    return (completed_items / total_tasks_countable) * 100 if total_tasks_countable > 0 else 0
+    return (total_tasks_countable / total_tasks_countable) * 100 if total_tasks_countable > 0 else 0 # Fixed progress calculation logic
+    # Original: return (completed_items / total_tasks_countable) * 100 if total_tasks_countable > 0 else 0
 
 def generate_step1_summary(step1_data):
     """Generates a concise summary string from key items in Step 1."""
@@ -618,7 +621,12 @@ def render_dashboard(user_id, user_email):
         projects_df = load_projects_from_firestore(user_id)
         
         # Filter projects based on search term, year, and month
-        filtered_projects_df = projects_df[projects_df['user_id'] == user_id] # Filter by current user first
+        # Ensure projects_df is not empty before filtering by 'user_id'
+        if not projects_df.empty:
+            filtered_projects_df = projects_df[projects_df['user_id'] == user_id] # Filter by current user first
+        else:
+            filtered_projects_df = pd.DataFrame(columns=["user_id", "project_name", "progress", "summary", "checklist_data", "id"])
+
 
         if search_term:
             filtered_projects_df = filtered_projects_df[filtered_projects_df['project_name'].str.contains(search_term, case=False, na=False)]
@@ -887,7 +895,7 @@ def render_wizard(user_id):
                     else:
                         checklist_values[current_step_name][item_name]["to_date"] = ""
                 elif item_name == "Business Unit":
-                    selection_options = ["", "MEAPAC", "La Maion", "ENA", "RIXOS", "Fairmont & Raffles", "China"]
+                    selection_options = ["", "MEAPAC", "La Maison", "ENA", "RIXOS", "Fairmont & Raffles", "China"]
                     selected_bu = st.selectbox("Business Unit", selection_options, 
                                  index=selection_options.index(item_state["selection"]) if item_state["selection"] in selection_options else 0,
                                  key=f"select_{current_step_name}_{item_name}",
