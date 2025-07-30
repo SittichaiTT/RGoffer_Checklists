@@ -25,7 +25,8 @@ THEME_COLORS = {
     "placeholder_text": "#9E9E9E", # Medium grey for placeholders
     "dropdown_fg": "#212121", # Dark text for dropdowns
     "dropdown_hover": "#F5F5F5", # Very light hover for dropdowns
-    "sub_group_underline": "#4285F4" # Consistent with primary color
+    "sub_group_underline": "#4285F4", # Consistent with primary color
+    "error_text": "#D32F2F" # Dark red for error messages
 }
 
 # Business Unit selection options constant
@@ -195,9 +196,20 @@ MONTH_NAMES = ["All Months", "January", "February", "March", "April", "May", "Ju
 def initialize_firebase():
     try:
         # Load Firebase credentials from Streamlit secrets
+        # Ensure 'firebase_credentials' key exists in .streamlit/secrets.toml
+        # with 'type', 'project_id', 'private_key_id', 'private_key', 'client_email', etc.
+        if "firebase_credentials" not in st.secrets:
+            st.error("Firebase credentials not found in Streamlit secrets.")
+            st.info("Please ensure your Firebase service account credentials are correctly configured in `.streamlit/secrets.toml` or Streamlit Cloud secrets.")
+            return None
+
         firebase_credentials_info = json.loads(st.secrets["firebase_credentials"])
         cred = credentials.Certificate(firebase_credentials_info)
-        firebase_admin.initialize_app(cred)
+        
+        # Check if app is already initialized to prevent re-initialization error
+        if not firebase_admin._apps:
+            firebase_admin.initialize_app(cred)
+        
         st.success("Firebase initialized successfully!")
         return firestore.client()
     except Exception as e:
@@ -210,19 +222,26 @@ db = initialize_firebase()
 # --- Authentication Functions ---
 def login_user(email, password):
     try:
+        # For a Streamlit app, Firebase Admin SDK cannot directly sign in users with email/password.
+        # This is a security measure. You would typically use Firebase Client SDK (JS) for this,
+        # or a custom backend.
+        # For this example, we'll simulate a check against Firebase users.
+        # In a real deployed app, you'd need a more robust client-side authentication flow.
         user = auth.get_user_by_email(email)
-        # In a real app, you would verify password here.
-        # Firebase Admin SDK does not directly verify passwords for security reasons.
-        # For a Streamlit app, you might use a client-side Firebase SDK or
-        # a custom backend to handle password authentication securely.
-        # For this example, we'll assume if user_by_email is found, it's a valid login.
-        # THIS IS NOT SECURE FOR PRODUCTION. For production, use Firebase client SDK or custom auth.
+        # This only checks if the user exists. It does NOT verify the password.
+        # For actual password verification, you'd need to use Firebase Client SDK (e.g., via JavaScript in an HTML component)
+        # or a custom backend that uses Firebase Admin SDK to verify credentials.
+        
+        # For demonstration purposes, if the user exists, we consider them "logged in".
+        # This is INSECURE for production.
         st.session_state.user_id = user.uid
         st.session_state.user_email = user.email
         st.session_state.logged_in = True
         log_activity(user.uid, user.email, "Logged in")
         st.success(f"Logged in as {user.email}")
         st.rerun()
+    except auth.UserNotFoundError:
+        st.error("Login failed: User not found. Please check your email.")
     except Exception as e:
         st.error(f"Login failed: {e}. Please check your email and password.")
 
@@ -347,6 +366,11 @@ def load_activity_logs():
         logs_list = []
         for doc in docs:
             log_data = doc.to_dict()
+            # Convert timestamp to datetime object if it's a Firestore Timestamp
+            if isinstance(log_data.get('timestamp'), datetime.datetime):
+                pass # Already datetime
+            elif hasattr(log_data.get('timestamp'), 'to_datetime'): # Firestore Timestamp object
+                log_data['timestamp'] = log_data['timestamp'].to_datetime()
             logs_list.append(log_data)
         return pd.DataFrame(logs_list)
     except Exception as e:
@@ -428,20 +452,28 @@ def get_available_years(projects_df):
     years = set()
     if not projects_df.empty:
         for _, project in projects_df.iterrows():
-            project_data = json.loads(project['checklist_data'])
-            bp_from_date_str = project_data.get('Step 1', {}).get("What is Booking Period (BOOPER ABSOLUTE)?", {}).get("from_date")
-            sp_from_date_str = project_data.get('Step 1', {}).get("Stay Period provided?", {}).get("from_date")
-            
-            if bp_from_date_str:
+            # Ensure 'checklist_data' is a string before loading JSON
+            if isinstance(project.get('checklist_data'), str):
                 try:
-                    years.add(datetime.datetime.strptime(bp_from_date_str, "%Y-%m-%d").year)
-                except ValueError:
-                    pass
-            if sp_from_date_str:
-                try:
-                    years.add(datetime.datetime.strptime(sp_from_date_str, "%Y-%m-%d").year)
-                except ValueError:
-                    pass
+                    project_data = json.loads(project['checklist_data'])
+                    bp_from_date_str = project_data.get('Step 1', {}).get("What is Booking Period (BOOPER ABSOLUTE)?", {}).get("from_date")
+                    sp_from_date_str = project_data.get('Step 1', {}).get("Stay Period provided?", {}).get("from_date")
+                    
+                    if bp_from_date_str:
+                        try:
+                            years.add(datetime.datetime.strptime(bp_from_date_str, "%Y-%m-%d").year)
+                        except ValueError:
+                            pass
+                    if sp_from_date_str:
+                        try:
+                            years.add(datetime.datetime.strptime(sp_from_date_str, "%Y-%m-%d").year)
+                        except ValueError:
+                            pass
+                except json.JSONDecodeError:
+                    st.warning(f"Invalid JSON in checklist_data for project: {project.get('project_name')}. Skipping year extraction.")
+            else:
+                st.warning(f"Non-string checklist_data for project: {project.get('project_name')}. Skipping year extraction.")
+
     return ["All Years"] + sorted([str(y) for y in list(years)], reverse=True)
 
 # --- UI Components ---
@@ -514,6 +546,11 @@ def render_login_page():
             font-size: 2em;
             margin-bottom: 1.5rem;
         }}
+        .stAlert {{
+            color: {THEME_COLORS['error_text']};
+            background-color: #FFEBEE; /* Light red background for errors */
+            border-color: #EF9A9A; /* Red border */
+        }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -533,7 +570,7 @@ def render_login_page():
     
     st.markdown("</div>", unsafe_allow_html=True)
 
-def render_dashboard(gc_client, user_id, user_email):
+def render_dashboard(user_id, user_email):
     """Renders the project dashboard view."""
     st.markdown(f"<h1 style='color:{THEME_COLORS['text_dark']}; font-size: 2.5em; font-weight: bold; margin-bottom: 2rem;'>ภาพรวมโครงการข้อเสนอภูมิภาค</h1>", unsafe_allow_html=True)
 
@@ -542,7 +579,7 @@ def render_dashboard(gc_client, user_id, user_email):
         if st.button("🚀 เริ่มโครงการใหม่", use_container_width=True):
             st.session_state.show_project_prompt = True
     with col2:
-        st.info(f"เข้าสู่ระบบในฐานะ: {user_email} (User ID: {user_id})", icon="�")
+        st.info(f"เข้าสู่ระบบในฐานะ: {user_email} (User ID: {user_id})", icon="👤")
         if st.button("ออกจากระบบ", key="logout_btn"):
             logout_user()
 
@@ -666,7 +703,7 @@ def render_dashboard(gc_client, user_id, user_email):
     st.markdown("</div>", unsafe_allow_html=True) # Close secondary_bg div
 
 
-def render_wizard(gc_client, user_id):
+def render_wizard(user_id):
     """Renders the multi-step checklist wizard view."""
     current_project_name = st.session_state.current_project_name
     current_step_index = st.session_state.current_step_index
@@ -1045,6 +1082,12 @@ def main():
         .st-emotion-cache-1r6ch9j > div:last-child {{ /* Target the third column (note) */
             padding-left: 0.5rem; /* Reduce padding */
         }}
+        /* Specific styling for error messages */
+        .stAlert.st-emotion-cache-1f1981t.e1f1d6gn0 {{ /* Target Streamlit's error alert */
+            color: {THEME_COLORS['error_text']} !important;
+            background-color: #FFEBEE !important; /* Light red background for errors */
+            border-color: #EF9A9A !important; /* Red border */
+        }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -1053,16 +1096,17 @@ def main():
         render_login_page()
     else:
         st.set_page_config(layout="wide", page_title="Regional Offer Checklist App")
-        # Initialize Google Sheets client (still needed for the `gc_client` parameter, but data ops are Firestore)
+        # Initialize Firebase client (db) is done globally via @st.cache_resource
         # We pass None for gc_client as it's no longer used for data ops, but functions expect it.
         # This is a temporary workaround until refactoring is complete.
-        gc_client = None 
-
+        # Note: render_dashboard and render_wizard no longer need gc_client as a parameter.
+        # I will remove it from their definitions.
+        
         # Render appropriate view
         if st.session_state.view == 'dashboard':
-            render_dashboard(gc_client, st.session_state.user_id, st.session_state.user_email)
+            render_dashboard(st.session_state.user_id, st.session_state.user_email)
         elif st.session_state.view == 'wizard':
-            render_wizard(gc_client, st.session_state.user_id)
+            render_wizard(st.session_state.user_id)
 
 if __name__ == "__main__":
     main()
