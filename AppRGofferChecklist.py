@@ -12,7 +12,7 @@ THEME_COLORS = {
     "primary_bg": "#F8F8F8",  # Very light grey background
     "secondary_bg": "#FFFFFF",  # Pure white for content blocks
     "text_dark": "#212121",   # Very dark grey/almost black for main text
-    "text_light": "#757575",  # Medium grey for secondary text
+    "text_light": "#616161",  # Medium grey for secondary text, improved contrast
     "button_primary": "#4285F4",  # Google Blue
     "button_primary_hover": "#3367D6", # Darker Google Blue on hover
     "button_secondary": "#BDBDBD", # Light neutral grey
@@ -555,40 +555,40 @@ def render_login_page():
     """, unsafe_allow_html=True)
 
     st.markdown("<div class='login-container'>", unsafe_allow_html=True)
-    st.markdown("<h1>เข้าสู่ระบบ</h1>", unsafe_allow_html=True)
+    st.markdown("<h1>Login</h1>", unsafe_allow_html=True)
 
     with st.form("login_form"):
-        email = st.text_input("อีเมล", key="login_email")
-        password = st.text_input("รหัสผ่าน", type="password", key="login_password")
-        submitted = st.form_submit_button("เข้าสู่ระบบ")
+        email = st.text_input("Email", key="login_email")
+        password = st.text_input("Password", type="password", key="login_password")
+        submitted = st.form_submit_button("Login")
 
         if submitted:
             if email and password:
                 login_user(email, password)
             else:
-                st.error("โปรดป้อนอีเมลและรหัสผ่าน")
+                st.error("Please enter both email and password.")
     
     st.markdown("</div>", unsafe_allow_html=True)
 
 def render_dashboard(user_id, user_email):
     """Renders the project dashboard view."""
-    st.markdown(f"<h1 style='color:{THEME_COLORS['text_dark']}; font-size: 2.5em; font-weight: bold; margin-bottom: 2rem;'>ภาพรวมโครงการข้อเสนอภูมิภาค</h1>", unsafe_allow_html=True)
+    st.markdown(f"<h1 style='color:{THEME_COLORS['text_dark']}; font-size: 2.5em; font-weight: bold; margin-bottom: 2rem;'>Regional Offer Projects Overview</h1>", unsafe_allow_html=True)
 
     col1, col2 = st.columns([1, 2])
     with col1:
-        if st.button("🚀 เริ่มโครงการใหม่", use_container_width=True):
+        if st.button("🚀 Start New Project", use_container_width=True):
             st.session_state.show_project_prompt = True
     with col2:
-        st.info(f"เข้าสู่ระบบในฐานะ: {user_email} (User ID: {user_id})", icon="👤")
-        if st.button("ออกจากระบบ", key="logout_btn"):
+        st.info(f"Logged in as: {user_email} (User ID: {user_id})", icon="👤")
+        if st.button("Logout", key="logout_btn"):
             logout_user()
 
     if st.session_state.get('show_project_prompt'):
         with st.form("new_project_form"):
-            st.markdown(f"<h2 style='color:{THEME_COLORS['text_dark']}; font-size: 1.5em; font-weight: bold; margin-bottom: 1rem;'>ป้อนชื่อโครงการ</h2>", unsafe_allow_html=True)
-            new_project_name = st.text_input("ชื่อโครงการ", key="new_project_name_input")
+            st.markdown(f"<h2 style='color:{THEME_COLORS['text_dark']}; font-size: 1.5em; font-weight: bold; margin-bottom: 1rem;'>Enter Project Name</h2>", unsafe_allow_html=True)
+            new_project_name = st.text_input("Project Name", key="new_project_name_input")
             
-            submitted = st.form_submit_button("ยืนยัน")
+            submitted = st.form_submit_button("Confirm")
             if submitted:
                 if new_project_name.strip():
                     st.session_state.current_project_name = new_project_name.strip()
@@ -597,22 +597,22 @@ def render_dashboard(user_id, user_email):
                     st.session_state.view = 'wizard'
                     st.rerun()
                 else:
-                    st.error("ชื่อโครงการไม่สามารถเว้นว่างได้.")
-            if st.form_submit_button("ยกเลิก", type="secondary"):
+                    st.error("Project name cannot be empty.")
+            if st.form_submit_button("Cancel", type="secondary"):
                 st.session_state.show_project_prompt = False
                 st.rerun()
 
 
     st.markdown(f"<div style='background-color:{THEME_COLORS['secondary_bg']}; padding: 1.5rem; border-radius: 0.75rem; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);'>", unsafe_allow_html=True)
     
-    tab1, tab2 = st.tabs(["ความคืบหน้าโครงการทั้งหมด", "บันทึก"])
+    tab1, tab2 = st.tabs(["All Project Progress", "Activity Log"])
 
     with tab1:
-        st.markdown(f"<h2 style='color:{THEME_COLORS['text_dark']}; font-size: 1.5em; font-weight: bold; margin-bottom: 1rem;'>ความคืบหน้าโครงการทั้งหมด</h2>", unsafe_allow_html=True)
+        st.markdown(f"<h2 style='color:{THEME_COLORS['text_dark']}; font-size: 1.5em; font-weight: bold; margin-bottom: 1rem;'>All Project Progress</h2>", unsafe_allow_html=True)
         
         col_search, col_year, col_month = st.columns([2, 1, 1])
         with col_search:
-            search_term = st.text_input("ค้นหาชื่อโปรเจกต์...", value=st.session_state.get('search_term', ''), key="search_input")
+            search_term = st.text_input("Search project...", value=st.session_state.get('search_term', ''), key="search_input")
             st.session_state.search_term = search_term # Update session state
 
         projects_df = load_projects_from_firestore(user_id)
@@ -625,11 +625,11 @@ def render_dashboard(user_id, user_email):
 
         available_years = get_available_years(filtered_projects_df) # Get years from filtered projects
         with col_year:
-            filter_year = st.selectbox("ทุกปี", available_years, key="filter_year")
+            filter_year = st.selectbox("All Years", available_years, key="filter_year")
             st.session_state.filter_year = filter_year
         
         with col_month:
-            filter_month = st.selectbox("ทุกเดือน", MONTH_NAMES, key="filter_month")
+            filter_month = st.selectbox("All Months", MONTH_NAMES, key="filter_month")
             st.session_state.filter_month = filter_month
 
         if filter_year != "All Years":
@@ -643,7 +643,7 @@ def render_dashboard(user_id, user_email):
             ]
 
         if filtered_projects_df.empty:
-            st.markdown(f"<p style='text-align:center; color:{THEME_COLORS['text_light']}; font-size: 1.125em;'>ไม่พบโครงการใดๆ ที่ตรงกับตัวกรอง. เริ่มโครงการใหม่ได้เลย!</p>", unsafe_allow_html=True)
+            st.markdown(f"<p style='text-align:center; color:{THEME_COLORS['text_light']}; font-size: 1.125em;'>No projects found matching the filters. Start a new one!</p>", unsafe_allow_html=True)
         else:
             cols = st.columns(3) # Display in 3 columns
             for i, (_, project) in enumerate(filtered_projects_df.iterrows()):
@@ -658,7 +658,7 @@ def render_dashboard(user_id, user_email):
                             st.rerun()
                         else:
                             st.session_state.confirm_delete_project = project['project_name']
-                            st.warning(f"คุณแน่ใจหรือไม่ว่าต้องการลบ '{project['project_name']}'? คลิก '🗑️' อีกครั้งเพื่อยืนยัน.")
+                            st.warning(f"Are you sure you want to delete '{project['project_name']}'? Click '🗑️' again to confirm.")
                     st.markdown("</div>", unsafe_allow_html=True)
 
                     # Circular Progress Indicator (simplified HTML/SVG)
@@ -683,7 +683,7 @@ def render_dashboard(user_id, user_email):
                     """, unsafe_allow_html=True)
 
                     st.markdown(f"<p style='text-align:center; color:{THEME_COLORS['text_light']}; font-size: 0.875em; min-height: 2.5rem;'>{project['summary']}</p>", unsafe_allow_html=True)
-                    if st.button("ดำเนินการต่อ", key=f"continue_{project['project_name']}", use_container_width=True):
+                    if st.button("Continue", key=f"continue_{project['project_name']}", use_container_width=True):
                         st.session_state.current_project_name = project['project_name']
                         st.session_state.checklist_values = json.loads(project['checklist_data']) # Load JSON string
                         st.session_state.current_step_index = 0
@@ -691,10 +691,10 @@ def render_dashboard(user_id, user_email):
                         st.rerun()
                     st.markdown("</div>", unsafe_allow_html=True)
     with tab2:
-        st.markdown(f"<h3 style='color:{THEME_COLORS['text_dark']}; font-size: 1.25em; font-weight: bold; margin-bottom: 1rem;'>กิจกรรมล่าสุด</h3>", unsafe_allow_html=True)
+        st.markdown(f"<h3 style='color:{THEME_COLORS['text_dark']}; font-size: 1.25em; font-weight: bold; margin-bottom: 1rem;'>Recent Activities</h3>", unsafe_allow_html=True)
         logs_df = load_activity_logs()
         if logs_df.empty:
-            st.info("ยังไม่มีกิจกรรม.")
+            st.info("No activities yet.")
         else:
             # Format timestamp for better readability
             logs_df['timestamp'] = logs_df['timestamp'].apply(lambda x: x.strftime("%Y-%m-%d %H:%M:%S"))
@@ -716,9 +716,9 @@ def render_wizard(user_id):
     # Progress bar and project info
     current_project_progress = calculate_progress(checklist_values)
     st.markdown(f"<div style='background-color:white; padding: 1.5rem; border-radius: 0.75rem; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06); border: 1px solid {THEME_COLORS['border_color']}; margin-bottom: 1.5rem;'>", unsafe_allow_html=True)
-    st.markdown(f"<h1 style='color:{THEME_COLORS['text_dark']}; font-size: 1.875em; font-weight: bold; margin-bottom: 0.5rem;'>โครงการ: {current_project_name}</h1>", unsafe_allow_html=True)
+    st.markdown(f"<h1 style='color:{THEME_COLORS['text_dark']}; font-size: 1.875em; font-weight: bold; margin-bottom: 0.5rem;'>Project: {current_project_name}</h1>", unsafe_allow_html=True)
     st.markdown(f"<div style='display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;'>", unsafe_allow_html=True)
-    st.markdown(f"<span style='color:{THEME_COLORS['text_light']}; font-size: 1.125em; font-weight: 500;'>ความคืบหน้า: {round(current_project_progress)}%</span>", unsafe_allow_html=True)
+    st.markdown(f"<span style='color:{THEME_COLORS['text_light']}; font-size: 1.125em; font-weight: 500;'>Progress: {round(current_project_progress)}%</span>", unsafe_allow_html=True)
     st.markdown(f"<div style='width: 66%; height: 0.5rem; border-radius: 9999px; background-color: {THEME_COLORS['secondary_bg']};'>", unsafe_allow_html=True)
     st.markdown(f"<div style='width: {current_project_progress}%; height: 100%; border-radius: 9999px; background-color: {THEME_COLORS['progress_green'] if current_project_progress >= 80 else (THEME_COLORS['progress_blue'] if current_project_progress >= 35 else THEME_COLORS['progress_yellow'])}; transition: all 0.5s ease-in-out;'></div>", unsafe_allow_html=True)
     st.markdown("</div></div>", unsafe_allow_html=True)
@@ -726,8 +726,8 @@ def render_wizard(user_id):
     # LLM Buttons
     llm_cols = st.columns([1, 1])
     with llm_cols[0]:
-        if st.button("✨ สรุปบันทึก", key="summarize_notes_btn", use_container_width=True):
-            with st.spinner("กำลังสรุปบันทึก..."):
+        if st.button("✨ Summarize Notes", key="summarize_notes_btn", use_container_width=True):
+            with st.spinner("Summarizing notes..."):
                 all_notes = []
                 for step_data in checklist_values.values():
                     for item_state in step_data.values():
@@ -735,7 +735,7 @@ def render_wizard(user_id):
                             all_notes.append(item_state["note"])
                 
                 if not all_notes:
-                    st.warning("ไม่มีบันทึกให้สรุป.")
+                    st.warning("No notes available to summarize.")
                 else:
                     prompt = f"Summarize the following project notes concisely, focusing on key actions, statuses, and issues. Combine related points and avoid redundancy:\n\n{'; '.join(all_notes)}"
                     # Gemini API call is commented out for now to focus on core features
@@ -747,13 +747,13 @@ def render_wizard(user_id):
     with llm_cols[1]:
         if current_step_index == 3: # Step 4 is index 3
             with st.form("email_draft_form"):
-                recipient = st.text_input("ป้อนผู้รับ (เช่น 'Expedia Partner'):", key="email_recipient_input_form")
-                purpose = st.text_input("ป้อนวัตถุประสงค์ของอีเมล (เช่น 'การเปิดตัวข้อเสนอภูมิภาคใหม่'):", key="email_purpose_input_form")
-                generate_button_clicked = st.form_submit_button("สร้างฉบับร่างอีเมล")
+                recipient = st.text_input("Enter recipient (e.g., 'Expedia Partner'):", key="email_recipient_input_form")
+                purpose = st.text_input("Enter email purpose (e.g., 'New regional offer launch'):", key="email_purpose_input_form")
+                generate_button_clicked = st.form_submit_button("Generate Email Draft")
                 
                 if generate_button_clicked:
                     if recipient and purpose:
-                        with st.spinner("กำลังร่างอีเมล..."):
+                        with st.spinner("Drafting email..."):
                             email_details = [f"Project: {current_project_name}"]
                             step4_data = checklist_values.get('Step 4', {}).get("Distribution to OTAS", {})
                             for item_name, item_state in step4_data.items():
@@ -781,7 +781,7 @@ def render_wizard(user_id):
                             st.session_state.llm_email_content = drafted_email
                             st.session_state.show_llm_email_modal = True
                     else:
-                        st.warning("โปรดป้อนทั้งผู้รับและวัตถุประสงค์เพื่อร่างอีเมล.")
+                        st.warning("Please enter both recipient and purpose to draft the email.")
     st.markdown("</div>", unsafe_allow_html=True) # Close header div
 
     # Step Indicators
@@ -811,15 +811,15 @@ def render_wizard(user_id):
                     }}
                 </style>
                 """, unsafe_allow_html=True)
-            if st.button(step, key=f"step_btn_{i}", disabled=is_step2_disabled, help="ขั้นตอนที่ 2 จะถูกข้ามหาก 'TK (Check if existing please follow 'CLEAN UP')' ถูกตั้งค่าเป็น 'No'"):
+            if st.button(step, key=f"step_btn_{i}", disabled=is_step2_disabled, help="Step 2 is skipped if 'TK (Check if existing please follow 'CLEAN UP')' is 'No'"):
                 if is_step2_disabled and i == 1:
-                    st.warning("ขั้นตอนที่ 2 ถูกข้ามเนื่องจาก 'TK (Check if existing please follow 'CLEAN UP')' ถูกตั้งค่าเป็น 'No'.")
+                    st.warning("Step 2 is skipped because 'TK (Check if existing please follow 'CLEAN UP')' was set to 'No'.")
                 else:
                     st.session_state.current_step_index = i
                     st.rerun()
     
     st.markdown(f"<div style='background-color:{THEME_COLORS['secondary_bg']}; padding: 1.5rem; border-radius: 0.75rem; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06); margin-top: 1.5rem;'>", unsafe_allow_html=True)
-    st.markdown(f"<h2 style='color:{THEME_COLORS['text_dark']}; font-size: 1.5em; font-weight: bold; margin-bottom: 1.5rem;'>{current_step_name} รายการตรวจสอบ</h2>", unsafe_allow_html=True)
+    st.markdown(f"<h2 style='color:{THEME_COLORS['text_dark']}; font-size: 1.5em; font-weight: bold; margin-bottom: 1.5rem;'>{current_step_name} Checklist</h2>", unsafe_allow_html=True)
 
     for sub_group_name, items in sub_groups.items():
         st.markdown(f"<div style='border-bottom: 2px solid {THEME_COLORS['sub_group_underline']}; padding-bottom: 0.5rem; margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center;'>", unsafe_allow_html=True)
@@ -828,14 +828,14 @@ def render_wizard(user_id):
         # Select All buttons for subgroup
         col_select_all_yes, col_select_all_no = st.columns(2)
         with col_select_all_yes:
-            if st.button("เลือกทั้งหมด ใช่", key=f"select_all_yes_{current_step_name}_{sub_group_name}", use_container_width=True):
+            if st.button("Select All Yes", key=f"select_all_yes_{current_step_name}_{sub_group_name}", use_container_width=True):
                 for item_name in items:
                     if "selection" in checklist_values[current_step_name][item_name]:
                         checklist_values[current_step_name][item_name]["selection"] = "Yes"
                 st.session_state.checklist_values = checklist_values
                 st.rerun()
         with col_select_all_no:
-            if st.button("เลือกทั้งหมด ไม่ใช่", key=f"select_all_no_{current_step_name}_{sub_group_name}", use_container_width=True):
+            if st.button("Select All No", key=f"select_all_no_{current_step_name}_{sub_group_name}", use_container_width=True):
                 for item_name in items:
                     if "selection" in checklist_values[current_step_name][item_name]:
                         checklist_values[current_step_name][item_name]["selection"] = "No"
@@ -869,7 +869,7 @@ def render_wizard(user_id):
                 st.markdown(f"<p style='color:{THEME_COLORS['text_dark']}; font-size: 0.95em; font-weight: 500; margin-bottom: 0;'>{item_name}</p>", unsafe_allow_html=True)
                 if "Booking Period" in item_name or "Stay Period" in item_name:
                     # Display date inputs here
-                    selected_from_date = st.date_input("จาก", 
+                    selected_from_date = st.date_input("From", 
                                   value=datetime.datetime.strptime(item_state["from_date"], "%Y-%m-%d").date() if item_state["from_date"] else None,
                                   key=f"from_date_{current_step_name}_{item_name}",
                                   label_visibility="collapsed")
@@ -878,7 +878,7 @@ def render_wizard(user_id):
                     else:
                         checklist_values[current_step_name][item_name]["from_date"] = ""
 
-                    selected_to_date = st.date_input("ถึง", 
+                    selected_to_date = st.date_input("To", 
                                   value=datetime.datetime.strptime(item_state["to_date"], "%Y-%m-%d").date() if item_state["to_date"] else None,
                                   key=f"to_date_{current_step_name}_{item_name}",
                                   label_visibility="collapsed")
@@ -895,7 +895,7 @@ def render_wizard(user_id):
                     checklist_values[current_step_name][item_name]["selection"] = selected_bu
             
             with item_cols[2]:
-                note_value = st.text_input("บันทึก", value=item_state["note"], key=f"note_{current_step_index}_{item_name}", label_visibility="collapsed")
+                note_value = st.text_input("Note", value=item_state["note"], key=f"note_{current_step_index}_{item_name}", label_visibility="collapsed")
                 checklist_values[current_step_name][item_name]["note"] = note_value
             
             st.markdown("<div style='margin-bottom: 0.5rem;'></div>", unsafe_allow_html=True) # Smaller separator
@@ -908,11 +908,11 @@ def render_wizard(user_id):
     # Navigation buttons
     nav_cols = st.columns([1, 1, 1, 1])
     with nav_cols[0]:
-        if st.button("🏠 กลับสู่แดชบอร์ด", key="back_to_dashboard_btn", use_container_width=True):
+        if st.button("🏠 Back to Dashboard", key="back_to_dashboard_btn", use_container_width=True):
             st.session_state.view = 'dashboard'
             st.rerun()
     with nav_cols[1]:
-        if st.button("< ก่อนหน้า", key="prev_step_btn", disabled=(current_step_index == 0), use_container_width=True):
+        if st.button("< Previous", key="prev_step_btn", disabled=(current_step_index == 0), use_container_width=True):
             tk_selection = checklist_values.get('Step 1', {}).get("TK (Check if existing please follow 'CLEAN UP')", {}).get("selection")
             if current_step_index == 2 and tk_selection == "No":
                 st.session_state.current_step_index = 0
@@ -920,7 +920,7 @@ def render_wizard(user_id):
                 st.session_state.current_step_index -= 1
             st.rerun()
     with nav_cols[2]:
-        if st.button("ถัดไป >", key="next_step_btn", disabled=(current_step_index == len(steps) - 1), use_container_width=True):
+        if st.button("Next >", key="next_step_btn", disabled=(current_step_index == len(steps) - 1), use_container_width=True):
             tk_selection = checklist_values.get('Step 1', {}).get("TK (Check if existing please follow 'CLEAN UP')", {}).get("selection")
             if current_step_index == 0 and tk_selection == "No":
                 st.session_state.current_step_index = 2
@@ -928,7 +928,7 @@ def render_wizard(user_id):
                 st.session_state.current_step_index += 1
             st.rerun()
     with nav_cols[3]:
-        if st.button("💾 บันทึกข้อมูล", key="save_data_btn", use_container_width=True):
+        if st.button("💾 Save Data", key="save_data_btn", use_container_width=True):
             summary_text = generate_step1_summary(checklist_values.get('Step 1', {}))
             save_project_to_firestore(user_id, current_project_name, current_project_progress, summary_text, checklist_values)
             st.rerun() # Rerun to refresh dashboard data if user goes back
@@ -1097,10 +1097,7 @@ def main():
     else:
         st.set_page_config(layout="wide", page_title="Regional Offer Checklist App")
         # Initialize Firebase client (db) is done globally via @st.cache_resource
-        # We pass None for gc_client as it's no longer used for data ops, but functions expect it.
-        # This is a temporary workaround until refactoring is complete.
         # Note: render_dashboard and render_wizard no longer need gc_client as a parameter.
-        # I will remove it from their definitions.
         
         # Render appropriate view
         if st.session_state.view == 'dashboard':
