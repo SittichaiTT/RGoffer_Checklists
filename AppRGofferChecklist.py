@@ -7,7 +7,7 @@ from firebase_admin import credentials, auth, firestore
 import uuid # For generating unique user IDs for anonymous login
 
 # --- Configuration ---
-# Theme Colors (Adjusted for minimalist, high-contrast look)
+# Theme Colors (Adjusted for minimalist, high-contrast look: Black, White, Orange/Amber/Green)
 THEME_COLORS = {
     "primary_bg": "#F5F5F5",  # Lighter grey background
     "secondary_bg": "#FFFFFF",  # Pure white for content blocks
@@ -220,27 +220,28 @@ def initialize_firebase():
 db = initialize_firebase()
 
 # --- Authentication Functions ---
-def login_user(email, password):
+def login_with_google_email(email):
+    """
+    Simulates Google login by checking if the email exists in Firebase Authentication.
+    This is a simplified, INSECURE simulation for demonstration purposes.
+    A real Google login would involve OAuth 2.0 flow.
+    """
     try:
-        # Firebase Admin SDK does not directly verify passwords for security reasons.
-        # For a Streamlit app, you would typically use a client-side Firebase SDK (e.g., via JavaScript in an HTML component)
-        # or a custom backend to handle password authentication securely.
-        # For this example, we'll simulate a check against Firebase users.
-        # This is INSECURE for production.
-        user = auth.get_user_by_email(email) # Checks if user exists by email
+        user = auth.get_user_by_email(email) # Check if user exists in Firebase Auth
         
-        # For demonstration purposes, if the user exists, we consider them "logged in".
-        # A real application would need to verify the password securely.
+        # In a real app, you'd integrate with Google Sign-In (OAuth)
+        # and verify the ID token here to securely log the user in.
+        # For this example, we proceed if the user email is found in Firebase.
         st.session_state.user_id = user.uid
         st.session_state.user_email = user.email
         st.session_state.logged_in = True
-        log_activity(user.uid, user.email, "Logged in")
+        log_activity(user.uid, user.email, "Logged in with Google Email (Simulated)")
         st.success(f"Logged in as {user.email}")
         st.rerun()
     except auth.UserNotFoundError:
-        st.error("Login failed: User not found. Please check your email.")
+        st.error("Login failed: Google Account not found in authorized users. Please check your email or contact support.")
     except Exception as e:
-        st.error(f"Login failed: {e}. Please check your email and password.")
+        st.error(f"Login failed: {e}. Please try again.")
 
 def logout_user():
     if st.session_state.get('logged_in'):
@@ -282,7 +283,14 @@ def load_projects_from_firestore(user_id):
             projects_list.append(project_data)
         
         # Explicitly define columns even if projects_list is empty to prevent KeyError
-        df = pd.DataFrame(projects_list, columns=["user_id", "project_name", "progress", "summary", "checklist_data", "id"])
+        # Ensure all expected columns are present, even if some are missing in Firestore data
+        expected_columns = ["user_id", "project_name", "progress", "summary", "checklist_data", "id"]
+        df = pd.DataFrame(projects_list)
+        # Add missing columns with None/NaN if they don't exist in fetched data
+        for col in expected_columns:
+            if col not in df.columns:
+                df[col] = None
+        df = df[expected_columns] # Reorder columns
         
         st.success(f"Successfully loaded {len(df)} projects from Firestore.")
         return df
@@ -418,8 +426,7 @@ def calculate_progress(values):
                 elif item_value and item_value.get("selection"):
                     completed_items += 1
     
-    return (total_tasks_countable / total_tasks_countable) * 100 if total_tasks_countable > 0 else 0 # Fixed progress calculation logic
-    # Original: return (completed_items / total_tasks_countable) * 100 if total_tasks_countable > 0 else 0
+    return (completed_items / total_tasks_countable) * 100 if total_tasks_countable > 0 else 0 # Fixed progress calculation logic
 
 def generate_step1_summary(step1_data):
     """Generates a concise summary string from key items in Step 1."""
@@ -561,15 +568,14 @@ def render_login_page():
     st.markdown("<h1>Login</h1>", unsafe_allow_html=True)
 
     with st.form("login_form"):
-        email = st.text_input("Email", key="login_email")
-        password = st.text_input("Password", type="password", key="login_password")
-        submitted = st.form_submit_button("Login")
+        google_email = st.text_input("Your Google Email", key="google_email_input")
+        submitted = st.form_submit_button("Login with Google Account")
 
         if submitted:
-            if email and password:
-                login_user(email, password)
+            if google_email:
+                login_with_google_email(google_email)
             else:
-                st.error("Please enter both email and password.")
+                st.error("Please enter your Google Email.")
     
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -634,11 +640,11 @@ def render_dashboard(user_id, user_email):
         available_years = get_available_years(filtered_projects_df) # Get years from filtered projects
         with col_year:
             filter_year = st.selectbox("All Years", available_years, key="filter_year")
-            st.session_state.filter_year = filter_year
+            # st.session_state.filter_year = filter_year # Removed redundant assignment
         
         with col_month:
             filter_month = st.selectbox("All Months", MONTH_NAMES, key="filter_month")
-            st.session_state.filter_month = filter_month
+            # st.session_state.filter_month = filter_month # Removed redundant assignment
 
         if filter_year != "All Years":
             filtered_projects_df = filtered_projects_df[
@@ -750,8 +756,7 @@ def render_wizard(user_id):
                     # gemini_model = get_gemini_model()
                     # summary = call_gemini_api(gemini_model, prompt)
                     summary = "LLM feature temporarily disabled for core app stability. Summary of notes would go here." # Placeholder
-                    st.session_state.llm_summary_content = summary
-                    st.session_state.show_llm_summary_modal = True
+                    st.session_state.llm_summary_modal = True
     with llm_cols[1]:
         if current_step_index == 3: # Step 4 is index 3
             with st.form("email_draft_form"):
@@ -938,7 +943,7 @@ def render_wizard(user_id):
     with nav_cols[3]:
         if st.button("💾 Save Data", key="save_data_btn", use_container_width=True):
             summary_text = generate_step1_summary(checklist_values.get('Step 1', {}))
-            save_project_to_firestore(user_id, current_project_name, current_project_progress, summary_text, checklist_values)
+            save_project_to_firestore(st.session_state.user_id, current_project_name, current_project_progress, summary_text, checklist_values)
             st.rerun() # Rerun to refresh dashboard data if user goes back
 
     # Display LLM output modals if triggered
@@ -976,7 +981,7 @@ def main():
     if 'llm_email_content' not in st.session_state:
         st.session_state.llm_email_content = ""
     if 'show_llm_email_modal' not in st.session_state:
-        st.session_state.show_llm_email_modal = False
+        st.session_state.llm_email_modal = False
     if 'search_term' not in st.session_state:
         st.session_state.search_term = ''
     if 'filter_year' not in st.session_state:
