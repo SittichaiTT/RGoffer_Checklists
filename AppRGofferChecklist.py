@@ -1,30 +1,31 @@
 import streamlit as st
-import gspread
 import pandas as pd
 import json
 import datetime
-from google.oauth2 import service_account
+import firebase_admin
+from firebase_admin import credentials, auth, firestore
+import uuid # For generating unique user IDs for anonymous login
 
 # --- Configuration ---
-# Theme Colors (Python dictionary for consistency) - Adjusted for better contrast
+# Theme Colors (Adjusted for minimalist, high-contrast look)
 THEME_COLORS = {
-    "primary_bg": "#F0F2F6",  # สีเทาอ่อนสำหรับพื้นหลังหลัก
-    "secondary_bg": "#FFFFFF",  # สีขาวสำหรับส่วนต่างๆ
-    "text_dark": "#2C3E50",   # สีดำเข้มขึ้นเพื่อให้อ่านง่าย
-    "text_light": "#7F8C8D",  # สีเทากลางสำหรับข้อความรอง
-    "button_primary": "#3498DB",  # สีน้ำเงินสดใส
-    "button_primary_hover": "#2980B9", # สีน้ำเงินเข้มขึ้นเมื่อวางเมาส์
-    "button_secondary": "#BDC3C7", # สีเทาอ่อนสำหรับปุ่มรอง
-    "button_secondary_hover": "#95A5A6", # สีเทาเข้มขึ้นเมื่อวางเมาส์
-    "button_disabled": "#E0E0E0", # สีเทาอ่อนสำหรับปุ่มที่ปิดใช้งาน
-    "progress_yellow": "#F39C12", # สีเหลืองสดใสขึ้น
-    "progress_blue": "#3498DB",   # สอดคล้องกับสีปุ่มหลัก
-    "progress_green": "#2ECC71",  # สีเขียวสดใสขึ้น
-    "border_color": "#D5DBDB", # สีขอบที่เข้มขึ้นเล็กน้อย
-    "placeholder_text": "#B2BABB", # สีเทาอ่อนสำหรับข้อความ Placeholder
-    "dropdown_fg": "#2C3E50", # สีข้อความเข้มสำหรับ Dropdown
-    "dropdown_hover": "#ECF0F1", # สีอ่อนเมื่อวางเมาส์บน Dropdown
-    "sub_group_underline": "#3498DB" # สอดคล้องกับสีหลัก
+    "primary_bg": "#F8F8F8",  # Very light grey background
+    "secondary_bg": "#FFFFFF",  # Pure white for content blocks
+    "text_dark": "#212121",   # Very dark grey/almost black for main text
+    "text_light": "#757575",  # Medium grey for secondary text
+    "button_primary": "#4285F4",  # Google Blue
+    "button_primary_hover": "#3367D6", # Darker Google Blue on hover
+    "button_secondary": "#BDBDBD", # Light neutral grey
+    "button_secondary_hover": "#9E9E9E", # Darker neutral grey on hover
+    "button_disabled": "#E0E0E0", # Light grey for disabled buttons
+    "progress_yellow": "#FBBC04", # Google Yellow
+    "progress_blue": "#4285F4",   # Consistent with primary button
+    "progress_green": "#34A853",  # Google Green
+    "border_color": "#E0E0E0", # Light grey border
+    "placeholder_text": "#9E9E9E", # Medium grey for placeholders
+    "dropdown_fg": "#212121", # Dark text for dropdowns
+    "dropdown_hover": "#F5F5F5", # Very light hover for dropdowns
+    "sub_group_underline": "#4285F4" # Consistent with primary color
 }
 
 # Business Unit selection options constant
@@ -188,7 +189,171 @@ HARDCODED_CHECKLIST_DATA = {
 
 MONTH_NAMES = ["All Months", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
 
-# --- Helper Functions ---
+# --- Firebase Initialization ---
+# This function initializes Firebase Admin SDK. It should only be called once.
+@st.cache_resource
+def initialize_firebase():
+    try:
+        # Load Firebase credentials from Streamlit secrets
+        firebase_credentials_info = json.loads(st.secrets["firebase_credentials"])
+        cred = credentials.Certificate(firebase_credentials_info)
+        firebase_admin.initialize_app(cred)
+        st.success("Firebase initialized successfully!")
+        return firestore.client()
+    except Exception as e:
+        st.error(f"Error initializing Firebase: {e}")
+        st.info("Please ensure your Firebase service account credentials are correctly configured in `.streamlit/secrets.toml`.")
+        return None
+
+db = initialize_firebase()
+
+# --- Authentication Functions ---
+def login_user(email, password):
+    try:
+        user = auth.get_user_by_email(email)
+        # In a real app, you would verify password here.
+        # Firebase Admin SDK does not directly verify passwords for security reasons.
+        # For a Streamlit app, you might use a client-side Firebase SDK or
+        # a custom backend to handle password authentication securely.
+        # For this example, we'll assume if user_by_email is found, it's a valid login.
+        # THIS IS NOT SECURE FOR PRODUCTION. For production, use Firebase client SDK or custom auth.
+        st.session_state.user_id = user.uid
+        st.session_state.user_email = user.email
+        st.session_state.logged_in = True
+        log_activity(user.uid, user.email, "Logged in")
+        st.success(f"Logged in as {user.email}")
+        st.rerun()
+    except Exception as e:
+        st.error(f"Login failed: {e}. Please check your email and password.")
+
+def logout_user():
+    if st.session_state.get('logged_in'):
+        log_activity(st.session_state.user_id, st.session_state.user_email, "Logged out")
+    st.session_state.logged_in = False
+    st.session_state.user_id = None
+    st.session_state.user_email = None
+    st.info("Logged out successfully.")
+    st.rerun()
+
+# --- Firestore Data Operations ---
+def get_user_projects_collection_ref(user_id):
+    """Returns the Firestore collection reference for a user's projects."""
+    if db is None:
+        return None
+    app_id = st.secrets.get("app_id", "default-app-id") # Get app_id from secrets or use default
+    return db.collection(f"artifacts/{app_id}/users/{user_id}/projects")
+
+def get_activity_logs_collection_ref():
+    """Returns the Firestore collection reference for activity logs."""
+    if db is None:
+        return None
+    app_id = st.secrets.get("app_id", "default-app-id") # Get app_id from secrets or use default
+    return db.collection(f"artifacts/{app_id}/public/activity_logs")
+
+def load_projects_from_firestore(user_id):
+    """Loads projects from Firestore for the given user."""
+    projects_ref = get_user_projects_collection_ref(user_id)
+    if projects_ref is None:
+        return pd.DataFrame(columns=["user_id", "project_name", "progress", "summary", "checklist_data"])
+    
+    try:
+        docs = projects_ref.stream()
+        projects_list = []
+        for doc in docs:
+            project_data = doc.to_dict()
+            project_data['id'] = doc.id # Store Firestore document ID
+            projects_list.append(project_data)
+        df = pd.DataFrame(projects_list)
+        st.success(f"Successfully loaded {len(df)} projects from Firestore.")
+        return df
+    except Exception as e:
+        st.error(f"Error loading projects from Firestore: {e}")
+        return pd.DataFrame(columns=["user_id", "project_name", "progress", "summary", "checklist_data"])
+
+def save_project_to_firestore(user_id, project_name, progress, summary, checklist_data):
+    """Saves or updates a project in Firestore."""
+    projects_ref = get_user_projects_collection_ref(user_id)
+    if projects_ref is None:
+        st.error("Firestore not initialized. Cannot save project.")
+        return
+
+    try:
+        # Check if project exists for this user
+        existing_doc = projects_ref.where("project_name", "==", project_name).limit(1).get()
+        
+        project_data = {
+            "user_id": user_id,
+            "project_name": project_name,
+            "progress": progress,
+            "summary": summary,
+            "checklist_data": json.dumps(checklist_data), # Store checklist_data as JSON string
+            "last_updated": datetime.datetime.now()
+        }
+
+        if existing_doc:
+            doc_id = existing_doc[0].id
+            projects_ref.document(doc_id).update(project_data)
+            st.success(f"Project '{project_name}' updated successfully!")
+            log_activity(user_id, st.session_state.user_email, f"Updated project '{project_name}'")
+        else:
+            projects_ref.add(project_data)
+            st.success(f"Project '{project_name}' created successfully!")
+            log_activity(user_id, st.session_state.user_email, f"Created new project '{project_name}'")
+    except Exception as e:
+        st.error(f"Error saving project to Firestore: {e}")
+
+def delete_project_from_firestore(user_id, project_name):
+    """Deletes a project from Firestore."""
+    projects_ref = get_user_projects_collection_ref(user_id)
+    if projects_ref is None:
+        st.error("Firestore not initialized. Cannot delete project.")
+        return
+
+    try:
+        existing_doc = projects_ref.where("project_name", "==", project_name).limit(1).get()
+        if existing_doc:
+            doc_id = existing_doc[0].id
+            projects_ref.document(doc_id).delete()
+            st.success(f"Project '{project_name}' deleted successfully!")
+            log_activity(user_id, st.session_state.user_email, f"Deleted project '{project_name}'")
+        else:
+            st.warning(f"Project '{project_name}' not found for deletion.")
+    except Exception as e:
+        st.error(f"Error deleting project from Firestore: {e}")
+
+def log_activity(user_id, user_email, description):
+    """Logs an activity to Firestore."""
+    logs_ref = get_activity_logs_collection_ref()
+    if logs_ref is None:
+        st.error("Firestore not initialized. Cannot log activity.")
+        return
+    try:
+        logs_ref.add({
+            "timestamp": datetime.datetime.now(),
+            "user_id": user_id,
+            "user_email": user_email,
+            "description": description
+        })
+    except Exception as e:
+        st.error(f"Error logging activity to Firestore: {e}")
+
+def load_activity_logs():
+    """Loads all activity logs from Firestore."""
+    logs_ref = get_activity_logs_collection_ref()
+    if logs_ref is None:
+        return pd.DataFrame(columns=["timestamp", "user_id", "user_email", "description"])
+    try:
+        docs = logs_ref.order_by("timestamp", direction=firestore.Query.DESCENDING).limit(100).stream()
+        logs_list = []
+        for doc in docs:
+            log_data = doc.to_dict()
+            logs_list.append(log_data)
+        return pd.DataFrame(logs_list)
+    except Exception as e:
+        st.error(f"Error loading activity logs from Firestore: {e}")
+        return pd.DataFrame(columns=["timestamp", "user_id", "user_email", "description"])
+
+# --- Helper Functions (unchanged logic) ---
 def get_initial_checklist_values():
     """Initializes an empty checklist structure based on HARDCODED_CHECKLIST_DATA."""
     initial_values = {}
@@ -209,7 +374,6 @@ def calculate_progress(values):
     total_tasks_countable = 0
     completed_items = 0
 
-    # Determine if Step 2 should be active for progress calculation
     tk_selection = values.get('Step 1', {}).get("TK (Check if existing please follow 'CLEAN UP')", {}).get("selection")
     is_step2_active_for_progress = tk_selection != "No"
 
@@ -262,135 +426,112 @@ def generate_step1_summary(step1_data):
 def get_available_years(projects_df):
     """Gets unique years from project data for filtering."""
     years = set()
-    for _, project in projects_df.iterrows():
-        project_data = json.loads(project['checklist_data'])
-        bp_from_date_str = project_data.get('Step 1', {}).get("What is Booking Period (BOOPER ABSOLUTE)?", {}).get("from_date")
-        sp_from_date_str = project_data.get('Step 1', {}).get("Stay Period provided?", {}).get("from_date")
-        
-        if bp_from_date_str:
-            try:
-                years.add(datetime.datetime.strptime(bp_from_date_str, "%Y-%m-%d").year)
-            except ValueError:
-                pass
-        if sp_from_date_str:
-            try:
-                years.add(datetime.datetime.strptime(sp_from_date_str, "%Y-%m-%d").year)
-            except ValueError:
-                pass
+    if not projects_df.empty:
+        for _, project in projects_df.iterrows():
+            project_data = json.loads(project['checklist_data'])
+            bp_from_date_str = project_data.get('Step 1', {}).get("What is Booking Period (BOOPER ABSOLUTE)?", {}).get("from_date")
+            sp_from_date_str = project_data.get('Step 1', {}).get("Stay Period provided?", {}).get("from_date")
+            
+            if bp_from_date_str:
+                try:
+                    years.add(datetime.datetime.strptime(bp_from_date_str, "%Y-%m-%d").year)
+                except ValueError:
+                    pass
+            if sp_from_date_str:
+                try:
+                    years.add(datetime.datetime.strptime(sp_from_date_str, "%Y-%m-%d").year)
+                except ValueError:
+                    pass
     return ["All Years"] + sorted([str(y) for y in list(years)], reverse=True)
 
-# --- Google Sheets Integration ---
-@st.cache_resource(ttl=3600)
-def get_gspread_client():
-    """Initializes and caches the gspread client using service account credentials."""
-    try:
-        # Load credentials from Streamlit secrets
-        # Ensure 'gcp_service_account' key exists in .streamlit/secrets.toml
-        # with 'type', 'project_id', 'private_key_id', 'private_key', 'client_email', etc.
-        credentials_info = json.loads(st.secrets["gcp_service_account"])
-        credentials = service_account.Credentials.from_service_account_info(
-            credentials_info,
-            scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-        )
-        gc = gspread.authorize(credentials)
-        st.success("Google Sheets client initialized successfully!") # Added for debugging
-        return gc
-    except Exception as e:
-        st.error(f"Error initializing Google Sheets client: {e}")
-        st.info("โปรดตรวจสอบให้แน่ใจว่าข้อมูลรับรองบัญชีบริการ Google Cloud ของคุณได้รับการกำหนดค่าอย่างถูกต้องใน `.streamlit/secrets.toml` และเปิดใช้งาน Google Sheets/Drive API แล้ว")
-        return None
-
-@st.cache_data(ttl=60) # Cache data for 60 seconds to avoid excessive API calls
-def load_projects_from_sheet(gc, sheet_name="Regional Offer Projects"):
-    """Loads all projects from a specified Google Sheet."""
-    if gc is None: # Added check for client
-        st.warning("Google Sheets client not initialized. Cannot load projects.")
-        return pd.DataFrame(columns=["user_id", "project_name", "progress", "summary", "checklist_data"])
-    try:
-        spreadsheet = gc.open(sheet_name)
-        worksheet = spreadsheet.worksheet("Projects") # Assuming a worksheet named "Projects"
-        data = worksheet.get_all_records() # Get all data as a list of dictionaries
-        df = pd.DataFrame(data)
-        st.success(f"Successfully loaded {len(df)} projects from Google Sheet.") # Added for debugging
-        return df
-    except gspread.exceptions.SpreadsheetNotFound:
-        st.warning(f"Google Sheet '{sheet_name}' ไม่พบ. โปรดสร้างและแชร์กับบัญชีบริการ.")
-        return pd.DataFrame(columns=["user_id", "project_name", "progress", "summary", "checklist_data"])
-    except gspread.exceptions.WorksheetNotFound:
-        st.warning(f"Worksheet 'Projects' ไม่พบใน '{sheet_name}'. โปรดสร้าง.")
-        return pd.DataFrame(columns=["user_id", "project_name", "progress", "summary", "checklist_data"])
-    except Exception as e:
-        st.error(f"Error loading projects from Google Sheet: {e}")
-        return pd.DataFrame(columns=["user_id", "project_name", "progress", "summary", "checklist_data"])
-
-def save_project_to_sheet(gc, user_id, project_name, progress, summary, checklist_data, sheet_name="Regional Offer Projects"):
-    """Saves or updates a project in the Google Sheet."""
-    if gc is None: # Added check for client
-        st.error("Google Sheets client not initialized. Cannot save project.")
-        return
-    try:
-        spreadsheet = gc.open(sheet_name)
-        worksheet = spreadsheet.worksheet("Projects")
-
-        # Load existing data to find the row
-        df = load_projects_from_sheet(gc, sheet_name)
-        
-        # Find if project exists for this user
-        existing_row_index = -1
-        if not df.empty:
-            matching_rows = df[(df['user_id'] == user_id) & (df['project_name'] == project_name)]
-            if not matching_rows.empty:
-                # gspread is 1-indexed, pandas is 0-indexed. Plus header row.
-                existing_row_index = matching_rows.index[0] + 2 
-
-        if existing_row_index != -1:
-            # Update existing row
-            worksheet.update_cell(existing_row_index, df.columns.get_loc('progress') + 1, progress)
-            worksheet.update_cell(existing_row_index, df.columns.get_loc('summary') + 1, summary)
-            worksheet.update_cell(existing_row_index, df.columns.get_loc('checklist_data') + 1, json.dumps(checklist_data))
-            st.success(f"Project '{project_name}' updated successfully!")
-        else:
-            # Add new row
-            new_row = [user_id, project_name, progress, summary, json.dumps(checklist_data)]
-            worksheet.append_row(new_row)
-            st.success(f"Project '{project_name}' created successfully!")
-        
-        # Invalidate cache so next load_projects_from_sheet gets fresh data
-        load_projects_from_sheet.clear()
-
-    except Exception as e:
-        st.error(f"Error saving project to Google Sheet: {e}")
-
-def delete_project_from_sheet(gc, user_id, project_name, sheet_name="Regional Offer Projects"):
-    """Deletes a project from the Google Sheet."""
-    if gc is None: # Added check for client
-        st.error("Google Sheets client not initialized. Cannot delete project.")
-        return
-    try:
-        spreadsheet = gc.open(sheet_name)
-        worksheet = spreadsheet.worksheet("Projects")
-
-        # Load existing data to find the row
-        df = load_projects_from_sheet(gc, sheet_name)
-        
-        # Find rows matching user_id and project_name
-        matching_rows = df[(df['user_id'] == user_id) & (df['project_name'] == project_name)]
-
-        if not matching_rows.empty:
-            # gspread is 1-indexed, pandas is 0-indexed. Plus header row.
-            row_to_delete = matching_rows.index[0] + 2 
-            worksheet.delete_rows(row_to_delete)
-            st.success(f"Project '{project_name}' deleted successfully!")
-        else:
-            st.warning(f"Project '{project_name}' ไม่พบสำหรับการลบ.")
-        
-        # Invalidate cache
-        load_projects_from_sheet.clear()
-
-    except Exception as e:
-        st.error(f"Error deleting project from Google Sheet: {e}")
-
 # --- UI Components ---
+def display_llm_output_modal(title, content):
+    """Simulates a modal for LLM output using Streamlit's expander."""
+    with st.expander(f"**{title}**", expanded=True):
+        st.text_area("Generated Content", content, height=300, disabled=True)
+        st.download_button(
+            label="Download as Text",
+            data=content,
+            file_name=f"{title.replace(' ', '_').lower()}.txt",
+            mime="text/plain"
+        )
+        st.info("You can copy the content by selecting it in the text area and pressing Ctrl+C (Cmd+C on Mac).")
+
+def render_login_page():
+    st.set_page_config(layout="centered", page_title="Login - Regional Offer Checklist App")
+    st.markdown(f"""
+    <style>
+        .stApp {{
+            background-color: {THEME_COLORS['primary_bg']};
+            color: {THEME_COLORS['text_dark']};
+            font-family: 'Inter', sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }}
+        .login-container {{
+            background-color: {THEME_COLORS['secondary_bg']};
+            padding: 2.5rem;
+            border-radius: 0.75rem;
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.15);
+            width: 100%;
+            max-width: 400px;
+            text-align: center;
+        }}
+        .stButton > button {{
+            background-color: {THEME_COLORS['button_primary']};
+            color: white;
+            border-radius: 0.5rem;
+            padding: 0.75rem 1.5rem;
+            font-weight: bold;
+            transition: background-color 0.2s, transform 0.2s;
+            border: none;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            width: 100%;
+            margin-top: 1rem;
+        }}
+        .stButton > button:hover {{
+            background-color: {THEME_COLORS['button_primary_hover']};
+            transform: translateY(-2px);
+        }}
+        .stTextInput > div > div > input {{
+            border-radius: 0.5rem;
+            border-color: {THEME_COLORS['border_color']};
+            background-color: {THEME_COLORS['primary_bg']};
+            color: {THEME_COLORS['text_dark']};
+            padding: 0.75rem 1rem;
+            font-size: 1em;
+        }}
+        .stTextInput label {{
+            color: {THEME_COLORS['text_dark']};
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            display: block;
+        }}
+        h1 {{
+            color: {THEME_COLORS['text_dark']};
+            font-size: 2em;
+            margin-bottom: 1.5rem;
+        }}
+    </style>
+    """, unsafe_allow_html=True)
+
+    st.markdown("<div class='login-container'>", unsafe_allow_html=True)
+    st.markdown("<h1>เข้าสู่ระบบ</h1>", unsafe_allow_html=True)
+
+    with st.form("login_form"):
+        email = st.text_input("อีเมล", key="login_email")
+        password = st.text_input("รหัสผ่าน", type="password", key="login_password")
+        submitted = st.form_submit_button("เข้าสู่ระบบ")
+
+        if submitted:
+            if email and password:
+                login_user(email, password)
+            else:
+                st.error("โปรดป้อนอีเมลและรหัสผ่าน")
+    
+    st.markdown("</div>", unsafe_allow_html=True)
 
 def render_dashboard(gc_client, user_id, user_email):
     """Renders the project dashboard view."""
@@ -401,7 +542,9 @@ def render_dashboard(gc_client, user_id, user_email):
         if st.button("🚀 เริ่มโครงการใหม่", use_container_width=True):
             st.session_state.show_project_prompt = True
     with col2:
-        st.info(f"เข้าสู่ระบบในฐานะ: {user_email} (User ID: {user_id})", icon="👤")
+        st.info(f"เข้าสู่ระบบในฐานะ: {user_email} (User ID: {user_id})", icon="�")
+        if st.button("ออกจากระบบ", key="logout_btn"):
+            logout_user()
 
     if st.session_state.get('show_project_prompt'):
         with st.form("new_project_form"):
@@ -415,8 +558,7 @@ def render_dashboard(gc_client, user_id, user_email):
                     st.session_state.checklist_values = get_initial_checklist_values()
                     st.session_state.current_step_index = 0
                     st.session_state.view = 'wizard'
-                    st.session_state.show_project_prompt = False
-                    st.rerun() # Rerun to switch view
+                    st.rerun()
                 else:
                     st.error("ชื่อโครงการไม่สามารถเว้นว่างได้.")
             if st.form_submit_button("ยกเลิก", type="secondary"):
@@ -436,7 +578,7 @@ def render_dashboard(gc_client, user_id, user_email):
             search_term = st.text_input("ค้นหาชื่อโปรเจกต์...", value=st.session_state.get('search_term', ''), key="search_input")
             st.session_state.search_term = search_term # Update session state
 
-        projects_df = load_projects_from_sheet(gc_client, "Regional Offer Projects")
+        projects_df = load_projects_from_firestore(user_id)
         
         # Filter projects based on search term, year, and month
         filtered_projects_df = projects_df[projects_df['user_id'] == user_id] # Filter by current user first
@@ -474,7 +616,7 @@ def render_dashboard(gc_client, user_id, user_email):
                     st.markdown(f"<h3 style='color:{THEME_COLORS['text_dark']}; font-size: 1.25em; font-weight: 600;'>{project['project_name']}</h3>", unsafe_allow_html=True)
                     if st.button("🗑️", key=f"delete_{project['project_name']}"):
                         if st.session_state.get('confirm_delete_project') == project['project_name']:
-                            delete_project_from_sheet(gc_client, user_id, project['project_name'])
+                            delete_project_from_firestore(user_id, project['project_name'])
                             st.session_state.confirm_delete_project = None # Reset confirmation
                             st.rerun()
                         else:
@@ -512,16 +654,14 @@ def render_dashboard(gc_client, user_id, user_email):
                         st.rerun()
                     st.markdown("</div>", unsafe_allow_html=True)
     with tab2:
-        st.markdown(f"<h3 style='color:{THEME_COLORS['text_dark']}; font-size: 1.25em; font-weight: bold; margin-bottom: 1rem;'>กิจกรรมล่าสุด (บันทึกตัวอย่าง)</h3>", unsafe_allow_html=True)
-        dummy_logs = [
-            "2024-07-18 10:00 AM: โครงการ 'Summer Campaign 2025' เริ่มต้นโดย User ABC.",
-            "2024-07-18 10:15 AM: User ABC อัปเดต 'Business Unit' เป็น 'MEAPAC' ใน 'Summer Campaign 2025'.",
-            "2024-07-18 11:00 AM: User XYZ ดำเนินการต่อ 'Winter Promo 2024'.",
-            "2024-07-17 03:30 PM: โครงการ 'Holiday Deals' ถูกลบโดย User PQR.",
-            "2024-07-16 09:00 AM: สร้างโครงการใหม่ 'Q4 Launch' โดย User LMN."
-        ]
-        for log in dummy_logs:
-            st.markdown(f"<p style='color:{THEME_COLORS['text_light']}; font-size: 0.875em;'>{log}</p>", unsafe_allow_html=True)
+        st.markdown(f"<h3 style='color:{THEME_COLORS['text_dark']}; font-size: 1.25em; font-weight: bold; margin-bottom: 1rem;'>กิจกรรมล่าสุด</h3>", unsafe_allow_html=True)
+        logs_df = load_activity_logs()
+        if logs_df.empty:
+            st.info("ยังไม่มีกิจกรรม.")
+        else:
+            # Format timestamp for better readability
+            logs_df['timestamp'] = logs_df['timestamp'].apply(lambda x: x.strftime("%Y-%m-%d %H:%M:%S"))
+            st.dataframe(logs_df[['timestamp', 'user_email', 'description']], use_container_width=True, hide_index=True)
     
     st.markdown("</div>", unsafe_allow_html=True) # Close secondary_bg div
 
@@ -546,13 +686,94 @@ def render_wizard(gc_client, user_id):
     st.markdown(f"<div style='width: {current_project_progress}%; height: 100%; border-radius: 9999px; background-color: {THEME_COLORS['progress_green'] if current_project_progress >= 80 else (THEME_COLORS['progress_blue'] if current_project_progress >= 35 else THEME_COLORS['progress_yellow'])}; transition: all 0.5s ease-in-out;'></div>", unsafe_allow_html=True)
     st.markdown("</div></div>", unsafe_allow_html=True)
 
+    # LLM Buttons
+    llm_cols = st.columns([1, 1])
+    with llm_cols[0]:
+        if st.button("✨ สรุปบันทึก", key="summarize_notes_btn", use_container_width=True):
+            with st.spinner("กำลังสรุปบันทึก..."):
+                all_notes = []
+                for step_data in checklist_values.values():
+                    for item_state in step_data.values():
+                        if item_state.get("note"):
+                            all_notes.append(item_state["note"])
+                
+                if not all_notes:
+                    st.warning("ไม่มีบันทึกให้สรุป.")
+                else:
+                    prompt = f"Summarize the following project notes concisely, focusing on key actions, statuses, and issues. Combine related points and avoid redundancy:\n\n{'; '.join(all_notes)}"
+                    # Gemini API call is commented out for now to focus on core features
+                    # gemini_model = get_gemini_model()
+                    # summary = call_gemini_api(gemini_model, prompt)
+                    summary = "LLM feature temporarily disabled for core app stability. Summary of notes would go here." # Placeholder
+                    st.session_state.llm_summary_content = summary
+                    st.session_state.show_llm_summary_modal = True
+    with llm_cols[1]:
+        if current_step_index == 3: # Step 4 is index 3
+            with st.form("email_draft_form"):
+                recipient = st.text_input("ป้อนผู้รับ (เช่น 'Expedia Partner'):", key="email_recipient_input_form")
+                purpose = st.text_input("ป้อนวัตถุประสงค์ของอีเมล (เช่น 'การเปิดตัวข้อเสนอภูมิภาคใหม่'):", key="email_purpose_input_form")
+                generate_button_clicked = st.form_submit_button("สร้างฉบับร่างอีเมล")
+                
+                if generate_button_clicked:
+                    if recipient and purpose:
+                        with st.spinner("กำลังร่างอีเมล..."):
+                            email_details = [f"Project: {current_project_name}"]
+                            step4_data = checklist_values.get('Step 4', {}).get("Distribution to OTAS", {})
+                            for item_name, item_state in step4_data.items():
+                                if item_state.get("selection") == 'Yes' or item_state.get("note"):
+                                    detail = f"{item_name}: {item_state.get('selection', '')}"
+                                    if item_state.get("note"):
+                                        detail += f" ({item_state['note']})"
+                                    email_details.append(detail.strip())
+
+                            prompt_text = (
+                                "Draft a professional email to '{recipient}' about '{purpose}'.\n"
+                                "Include the following details from the regional offer distribution checklist:\n"
+                                "{email_details_str}\n\n"
+                                "Keep it concise and actionable."
+                            ).format(
+                                recipient=recipient,
+                                purpose=purpose,
+                                email_details_str='\n'.join(email_details)
+                            )
+                            
+                            # Gemini API call is commented out for now to focus on core features
+                            # gemini_model = get_gemini_model()
+                            # drafted_email = call_gemini_api(gemini_model, prompt_text)
+                            drafted_email = "LLM feature temporarily disabled for core app stability. Drafted email would go here." # Placeholder
+                            st.session_state.llm_email_content = drafted_email
+                            st.session_state.show_llm_email_modal = True
+                    else:
+                        st.warning("โปรดป้อนทั้งผู้รับและวัตถุประสงค์เพื่อร่างอีเมล.")
+    st.markdown("</div>", unsafe_allow_html=True) # Close header div
+
     # Step Indicators
     step_cols = st.columns(len(steps))
     for i, step in enumerate(steps):
         is_step2_disabled = (i == 1 and checklist_values.get('Step 1', {}).get("TK (Check if existing please follow 'CLEAN UP')", {}).get("selection") == "No")
-        button_style = f"background-color: {THEME_COLORS['button_primary'] if i == current_step_index else (THEME_COLORS['button_disabled'] if is_step2_disabled else THEME_COLORS['button_secondary'])}; color: white; font-weight: bold; padding: 0.5rem 1rem; border-radius: 0.5rem; border: none; cursor: {'not-allowed' if is_step2_disabled else 'pointer'}; transition: background-color 0.2s;"
         
         with step_cols[i]:
+            st.markdown(f"""
+                <style>
+                    .stButton[data-testid="stButton-{f"step_btn_{i}"}"] > button {{
+                        background-color: {THEME_COLORS['button_primary'] if i == current_step_index else (THEME_COLORS['button_disabled'] if is_step2_disabled else THEME_COLORS['button_secondary'])};
+                        color: white;
+                        font-weight: bold;
+                        padding: 0.3rem 0.8rem; /* Smaller padding */
+                        font-size: 0.85em; /* Smaller font size */
+                        border-radius: 0.5rem;
+                        border: none;
+                        cursor: {'not-allowed' if is_step2_disabled else 'pointer'};
+                        transition: background-color 0.2s, transform 0.2s;
+                        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                        width: 100%; /* Ensure it fills column */
+                    }}
+                    .stButton[data-testid="stButton-{f"step_btn_{i}"}"] > button:hover {{
+                        background-color: {THEME_COLORS['button_primary_hover'] if i == current_step_index else (THEME_COLORS['button_disabled'] if is_step2_disabled else THEME_COLORS['button_secondary_hover'])};
+                        transform: translateY(-1px); /* Smaller hover effect */
+                    }}
+                </style>
+                """, unsafe_allow_html=True)
             if st.button(step, key=f"step_btn_{i}", disabled=is_step2_disabled, help="ขั้นตอนที่ 2 จะถูกข้ามหาก 'TK (Check if existing please follow 'CLEAN UP')' ถูกตั้งค่าเป็น 'No'"):
                 if is_step2_disabled and i == 1:
                     st.warning("ขั้นตอนที่ 2 ถูกข้ามเนื่องจาก 'TK (Check if existing please follow 'CLEAN UP')' ถูกตั้งค่าเป็น 'No'.")
@@ -588,48 +809,59 @@ def render_wizard(gc_client, user_id):
         for item_name in items:
             item_state = checklist_values.get(current_step_name, {}).get(item_name, {"selection": "", "from_date": "", "to_date": "", "note": ""})
             
-            item_cols = st.columns([0.2, 0.5, 0.3]) # Adjust column widths for better layout
+            # Adjusted column widths for a more compact and readable row layout
+            item_cols = st.columns([0.1, 0.4, 0.5]) # Smaller first column for radio/checkbox, larger for text and note
 
             with item_cols[0]:
                 if "Booking Period" in item_name or "Stay Period" in item_name:
-                    # Streamlit date_input returns datetime.date object. Convert to string for storage.
-                    selected_from_date = st.date_input(f"จาก: {item_name}", 
+                    # Date inputs are naturally larger, will keep them as is for usability
+                    # Labels are moved to the main text column for better alignment
+                    pass 
+                elif item_name == "Business Unit":
+                    # Selection box will be in the main text column
+                    pass
+                else:
+                    selection_options = ["", "Yes", "No"]
+                    selected_option = st.selectbox("", selection_options, # Label is empty, item_name will be in next column
+                                 index=selection_options.index(item_state["selection"]) if item_state["selection"] in selection_options else 0,
+                                 key=f"select_{current_step_name}_{item_name}",
+                                 label_visibility="collapsed") # Hide default label for compactness
+                    checklist_values[current_step_name][item_name]["selection"] = selected_option
+            
+            with item_cols[1]:
+                st.markdown(f"<p style='color:{THEME_COLORS['text_dark']}; font-size: 0.95em; font-weight: 500; margin-bottom: 0;'>{item_name}</p>", unsafe_allow_html=True)
+                if "Booking Period" in item_name or "Stay Period" in item_name:
+                    # Display date inputs here
+                    selected_from_date = st.date_input("จาก", 
                                   value=datetime.datetime.strptime(item_state["from_date"], "%Y-%m-%d").date() if item_state["from_date"] else None,
-                                  key=f"from_date_{current_step_name}_{item_name}")
+                                  key=f"from_date_{current_step_name}_{item_name}",
+                                  label_visibility="collapsed")
                     if selected_from_date:
                         checklist_values[current_step_name][item_name]["from_date"] = str(selected_from_date)
                     else:
                         checklist_values[current_step_name][item_name]["from_date"] = ""
 
-                    selected_to_date = st.date_input(f"ถึง: {item_name}", 
+                    selected_to_date = st.date_input("ถึง", 
                                   value=datetime.datetime.strptime(item_state["to_date"], "%Y-%m-%d").date() if item_state["to_date"] else None,
-                                  key=f"to_date_{current_step_name}_{item_name}")
+                                  key=f"to_date_{current_step_name}_{item_name}",
+                                  label_visibility="collapsed")
                     if selected_to_date:
                         checklist_values[current_step_name][item_name]["to_date"] = str(selected_to_date)
                     else:
                         checklist_values[current_step_name][item_name]["to_date"] = ""
-
                 elif item_name == "Business Unit":
                     selection_options = ["", "MEAPAC", "La Maion", "ENA", "RIXOS", "Fairmont & Raffles", "China"]
-                    selected_bu = st.selectbox(item_name, selection_options, 
+                    selected_bu = st.selectbox("Business Unit", selection_options, 
                                  index=selection_options.index(item_state["selection"]) if item_state["selection"] in selection_options else 0,
-                                 key=f"select_{current_step_name}_{item_name}")
+                                 key=f"select_{current_step_name}_{item_name}",
+                                 label_visibility="collapsed")
                     checklist_values[current_step_name][item_name]["selection"] = selected_bu
-                else:
-                    selection_options = ["", "Yes", "No"]
-                    selected_option = st.selectbox(item_name, selection_options, 
-                                 index=selection_options.index(item_state["selection"]) if item_state["selection"] in selection_options else 0,
-                                 key=f"select_{current_step_name}_{item_name}")
-                    checklist_values[current_step_name][item_name]["selection"] = selected_option
             
-            with item_cols[1]:
-                st.markdown(f"<p style='color:{THEME_COLORS['text_dark']}; font-size: 1em; font-weight: 500;'>{item_name}</p>", unsafe_allow_html=True)
-
             with item_cols[2]:
-                note_value = st.text_input("บันทึก", value=item_state["note"], key=f"note_{current_step_index}_{item_name}")
+                note_value = st.text_input("บันทึก", value=item_state["note"], key=f"note_{current_step_index}_{item_name}", label_visibility="collapsed")
                 checklist_values[current_step_name][item_name]["note"] = note_value
             
-            st.markdown("---") # Separator for items
+            st.markdown("<div style='margin-bottom: 0.5rem;'></div>", unsafe_allow_html=True) # Smaller separator
 
     # Update session state after all inputs are processed for the current step
     st.session_state.checklist_values = checklist_values
@@ -661,12 +893,53 @@ def render_wizard(gc_client, user_id):
     with nav_cols[3]:
         if st.button("💾 บันทึกข้อมูล", key="save_data_btn", use_container_width=True):
             summary_text = generate_step1_summary(checklist_values.get('Step 1', {}))
-            save_project_to_sheet(gc_client, user_id, current_project_name, current_project_progress, summary_text, checklist_values)
+            save_project_to_firestore(user_id, current_project_name, current_project_progress, summary_text, checklist_values)
             st.rerun() # Rerun to refresh dashboard data if user goes back
+
+    # Display LLM output modals if triggered
+    if st.session_state.get('show_llm_summary_modal'):
+        display_llm_output_modal("Project Notes Summary", st.session_state.llm_summary_content)
+        st.session_state.show_llm_summary_modal = False # Reset after display
+
+    if st.session_state.get('show_llm_email_modal'):
+        display_llm_output_modal("Drafted Email", st.session_state.llm_email_content)
+        st.session_state.show_llm_email_modal = False # Reset after display
 
 # --- Main App Logic ---
 def main():
-    st.set_page_config(layout="wide", page_title="Regional Offer Checklist App")
+    # Initialize session state variables if they don't exist
+    if 'logged_in' not in st.session_state:
+        st.session_state.logged_in = False
+    if 'user_id' not in st.session_state:
+        st.session_state.user_id = None
+    if 'user_email' not in st.session_state:
+        st.session_state.user_email = None
+    if 'view' not in st.session_state:
+        st.session_state.view = 'dashboard'
+    if 'current_project_name' not in st.session_state:
+        st.session_state.current_project_name = None
+    if 'checklist_values' not in st.session_state:
+        st.session_state.checklist_values = get_initial_checklist_values()
+    if 'current_step_index' not in st.session_state:
+        st.session_state.current_step_index = 0
+    if 'show_project_prompt' not in st.session_state:
+        st.session_state.show_project_prompt = False
+    if 'llm_summary_content' not in st.session_state:
+        st.session_state.llm_summary_content = ""
+    if 'show_llm_summary_modal' not in st.session_state:
+        st.session_state.show_llm_summary_modal = False
+    if 'llm_email_content' not in st.session_state:
+        st.session_state.llm_email_content = ""
+    if 'show_llm_email_modal' not in st.session_state:
+        st.session_state.show_llm_email_modal = False
+    if 'search_term' not in st.session_state:
+        st.session_state.search_term = ''
+    if 'filter_year' not in st.session_state:
+        st.session_state.filter_year = 'All Years'
+    if 'filter_month' not in st.session_state:
+        st.session_state.filter_month = 'All Months'
+    if 'confirm_delete_project' not in st.session_state:
+        st.session_state.confirm_delete_project = None
 
     # Apply custom CSS for styling
     st.markdown(f"""
@@ -680,11 +953,12 @@ def main():
             background-color: {THEME_COLORS['button_primary']};
             color: white;
             border-radius: 0.5rem;
-            padding: 0.75rem 1.5rem;
+            padding: 0.75rem 1.5rem; /* Default button padding */
             font-weight: bold;
             transition: background-color 0.2s, transform 0.2s;
             border: none;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            font-size: 1em; /* Default button font size */
         }}
         .stButton > button:hover {{
             background-color: {THEME_COLORS['button_primary_hover']};
@@ -695,29 +969,41 @@ def main():
             cursor: not-allowed;
             transform: none;
         }}
+        /* Specific styling for step navigation buttons - applied via markdown in render_wizard */
+        
         .stSelectbox > div > div {{
             border-radius: 0.5rem;
             border-color: {THEME_COLORS['border_color']};
             background-color: {THEME_COLORS['primary_bg']};
             color: {THEME_COLORS['text_dark']};
+            font-size: 0.9em; /* Smaller font for selectbox */
+        }}
+        .stSelectbox > div > div > div[data-baseweb="select"] {{
+            padding: 0.25rem 0.5rem; /* Smaller padding for selectbox */
         }}
         .stTextInput > div > div > input {{
             border-radius: 0.5rem;
             border-color: {THEME_COLORS['border_color']};
             background-color: {THEME_COLORS['primary_bg']};
             color: {THEME_COLORS['text_dark']};
+            padding: 0.25rem 0.5rem; /* Smaller padding for text input */
+            font-size: 0.9em; /* Smaller font for text input */
         }}
         .stTextArea > div > div > textarea {{
             border-radius: 0.5rem;
             border-color: {THEME_COLORS['border_color']};
             background-color: {THEME_COLORS['primary_bg']};
             color: {THEME_COLORS['text_dark']};
+            padding: 0.25rem 0.5rem; /* Smaller padding for text area */
+            font-size: 0.9em; /* Smaller font for text area */
         }}
         .stDateInput > label + div > div {{
             border-radius: 0.5rem;
             border-color: {THEME_COLORS['border_color']};
             background-color: {THEME_COLORS['primary_bg']};
             color: {THEME_COLORS['text_dark']};
+            padding: 0.25rem 0.5rem; /* Smaller padding for date input */
+            font-size: 0.9em; /* Smaller font for date input */
         }}
         .stDateInput > label + div > div > input {{
             color: {THEME_COLORS['text_dark']};
@@ -745,50 +1031,39 @@ def main():
             border: 1px solid {THEME_COLORS['border_color']};
             padding: 1rem;
         }}
+        /* Custom styling for checklist items to make them more compact */
+        div[data-testid="stVerticalBlock"] > div > div > div > div.st-emotion-cache-1r6ch9j {{ /* Target the inner div containing the item columns */
+            margin-bottom: 0.25rem; /* Reduce space between items */
+        }}
+        .st-emotion-cache-1r6ch9j > div:first-child {{ /* Target the first column (selection) */
+            padding-right: 0.5rem; /* Reduce padding */
+        }}
+        .st-emotion-cache-1r6ch9j > div:nth-child(2) {{ /* Target the second column (item name) */
+            padding-left: 0.5rem; /* Reduce padding */
+            padding-right: 0.5rem;
+        }}
+        .st-emotion-cache-1r6ch9j > div:last-child {{ /* Target the third column (note) */
+            padding-left: 0.5rem; /* Reduce padding */
+        }}
     </style>
     """, unsafe_allow_html=True)
 
-    # Initialize session state variables if they don't exist
-    if 'view' not in st.session_state:
-        st.session_state.view = 'dashboard'
-    if 'current_project_name' not in st.session_state:
-        st.session_state.current_project_name = None
-    if 'checklist_values' not in st.session_state:
-        st.session_state.checklist_values = get_initial_checklist_values()
-    if 'current_step_index' not in st.session_state:
-        st.session_state.current_step_index = 0
-    if 'show_project_prompt' not in st.session_state:
-        st.session_state.show_project_prompt = False
-    if 'search_term' not in st.session_state:
-        st.session_state.search_term = ''
-    if 'filter_year' not in st.session_state:
-        st.session_state.filter_year = 'All Years'
-    if 'filter_month' not in st.session_state:
-        st.session_state.filter_month = 'All Months'
-    if 'confirm_delete_project' not in st.session_state:
-        st.session_state.confirm_delete_project = None
+    # Main app logic based on authentication status
+    if not st.session_state.logged_in:
+        render_login_page()
+    else:
+        st.set_page_config(layout="wide", page_title="Regional Offer Checklist App")
+        # Initialize Google Sheets client (still needed for the `gc_client` parameter, but data ops are Firestore)
+        # We pass None for gc_client as it's no longer used for data ops, but functions expect it.
+        # This is a temporary workaround until refactoring is complete.
+        gc_client = None 
 
-
-    # --- Authentication (Simplified for local testing) ---
-    # For a real app, you'd integrate with st-oauth or similar.
-    # Here, we'll simulate a logged-in user with a dummy ID and email.
-    # In a real deployed app, you'd replace this with actual Google OAuth.
-    user_id = "dummy_user_id_123" # Replace with actual authenticated user ID
-    user_email = "dummy.user@example.com" # Replace with actual authenticated user email
-
-    # Initialize Google Sheets client
-    gc_client = get_gspread_client()
-    # If gc_client is None, it means there was an error initializing.
-    # The error message is already displayed by get_gspread_client.
-    # We can add a check here to prevent further execution if the client is not ready.
-    if gc_client is None:
-        st.stop() # Stop the app if Google Sheets client cannot be initialized
-
-    # Render appropriate view
-    if st.session_state.view == 'dashboard':
-        render_dashboard(gc_client, user_id, user_email)
-    elif st.session_state.view == 'wizard':
-        render_wizard(gc_client, user_id)
+        # Render appropriate view
+        if st.session_state.view == 'dashboard':
+            render_dashboard(gc_client, st.session_state.user_id, st.session_state.user_email)
+        elif st.session_state.view == 'wizard':
+            render_wizard(gc_client, st.session_state.user_id)
 
 if __name__ == "__main__":
     main()
+�
